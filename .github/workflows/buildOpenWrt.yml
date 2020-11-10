@@ -1,0 +1,120 @@
+name: 编译OpenWrt固件
+on:
+  # 为了让工作流界面出现运行按钮
+  workflow_dispatch:
+  watch:
+    types: [started]
+  push:
+    branches:
+    - master
+  schedule:
+    # https://docs.github.com/en/actions/reference/events-that-trigger-workflows#scheduled-events
+    - cron: '0 0 * * *'
+env:
+  DOCKER_RUN:  sh ./githubUse.sh dockerRun
+  OPENWRT_DIR: openwrt_code
+  TZ: Asia/Shanghai
+jobs:
+  buildOpenWrt:
+    runs-on: ubuntu-latest
+    if: github.event.repository.owner.id == github.event.sender.id
+    steps:
+    - uses: actions/checkout@v2
+      # http://man7.org/linux/man-pages/man1/date.1.html
+    - name: 得到构建开始的日期和时间
+      run: chmod +x ./githubUse.sh && ./githubUse.sh getBuildStartDateTime
+    - name: 查看文件详情
+      run: |
+        sudo timedatectl set-timezone "$TZ"
+        whoami
+        pwd
+        df -hT $(pwd)
+        du -ahd 2
+    - name: 查找缓存：Docker镜像
+      id: cache-img
+      uses: actions/cache@main
+      env:
+        cache-name: cache-docker-image-openwrt-test
+      with:
+        path: openwrt_img.tar
+        key: ${{ env.cache-name }}-${{ hashFiles('image/Dockerfile') }}
+    - name: 获取Docker镜像
+      run: |
+        if [ -e openwrt_img.tar ]; then
+          docker image load --input openwrt_img.tar
+        else
+          cd image
+          docker build . --file Dockerfile --tag openwrt --build-arg BASE_IMAGE=alpine --build-arg WHO_UID=1001
+          docker image save --output ../openwrt_img.tar openwrt
+        fi
+    - name: 查找缓存：OpenWrt目录
+      id: cache-openwrt-dir
+      uses: actions/cache@main
+      env:
+        cache-name: cache-openwrt-dir
+      with:
+        path: |
+          ${{ env.OPENWRT_DIR }}
+        key: ${{ env.cache-name }}-${{ env.BUILD_START_DATE_TIME }}
+        restore-keys: |
+          ${{ env.cache-name }}-
+    - name: 处理源码
+      run: $DOCKER_RUN disposeOpenWrtCode
+    - name: 判断是否要更新和安装Feeds
+      uses: actions/cache@main
+      id: cache-feeds
+      with:
+        path: foo
+        key: cache-feeds-${{ env.GIT_COMMIT_DATE_TIME }}
+    - name: 更新Feeds
+      if: steps.cache-feeds.outputs.cache-hit != 'true'
+      run: $DOCKER_RUN updatingFeeds
+    - name: 安装Feeds
+      if: steps.cache-feeds.outputs.cache-hit != 'true'
+      run: $DOCKER_RUN installFeeds
+    - name: 判断是否要扩展OpenWrt配置文件
+      uses: actions/cache@main
+      id: cache-config
+      with:
+        path: foo
+        key: cache-config-${{ env.GIT_COMMIT_DATE_TIME }}-${{ hashFiles('openwrt_code/.config') }}
+    - name: 扩展OpenWrt配置文件
+      if: steps.cache-config.outputs.cache-hit != 'true'
+      run: $DOCKER_RUN expandConfig
+    - name: 判断是否要重新下载固件依赖
+      uses: actions/cache@main
+      id: cache-dependency
+      with:
+        path: foo
+        key: cache-dependency-${{ env.GIT_COMMIT_DATE_TIME }}-${{ hashFiles('openwrt_code/.config') }}
+    - name: 下载固件依赖
+      id: downloadDependency
+      if: steps.cache-dependency.outputs.cache-hit != 'true'
+      run: $DOCKER_RUN downloadDependency
+    - name: 编译固件
+      if: steps.downloadDependency.outputs.status != 'fail'
+      run: $DOCKER_RUN compileFirmware e
+    - name: 查看文件详情2
+      run: |
+        df -hT $(pwd)
+        du -ahd 2
+    - name: 上传config.buildinfo和initramfs
+      if: env.COMPILE_FIRMWARE_STATUS == 'success'
+      uses: actions/upload-artifact@main
+      with:
+        if-no-files-found: warn
+        name: initramfs_${{ env.DEVICE_NAME }}${{ env.GIT_COMMIT_DATE_TIME }}
+        path: |
+          ${{ env.OPENWRT_DIR }}/bin/targets/*/*/config.buildinfo
+          ${{ env.OPENWRT_DIR }}/bin/targets/*/*/*initramfs*.bin
+    - name: 上传sysupgrade和sha256sums
+      if: env.COMPILE_FIRMWARE_STATUS == 'success'
+      uses: actions/upload-artifact@main
+      with:
+        if-no-files-found: warn
+        name: sysupgrade_${{ env.DEVICE_NAME }}${{ env.GIT_COMMIT_DATE_TIME }}
+        path: |
+          ${{ env.OPENWRT_DIR }}/bin/targets/*/*/*sysupgrade.bin
+          ${{ env.OPENWRT_DIR }}/bin/targets/*/*/sha256sums
+    - name: 清理文件
+      run: $DOCKER_RUN cleaningUp
