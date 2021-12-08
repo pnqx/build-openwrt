@@ -93,7 +93,7 @@ jobs:
       run: $DOCKER_RUN downloadDependency
     - name: 编译固件
       if: steps.downloadDependency.outputs.status != 'fail'
-      run: $DOCKER_RUN compileFirmware e
+      run: $DOCKER_RUN compileFirmware
     - name: 查看文件详情2
       run: |
         df -hT $(pwd)
