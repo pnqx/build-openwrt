@@ -107,24 +107,7 @@ compileFirmware(){
   echo CPU核心数为$cpu
   jobs=$((cpu + 1))
   patchFile
-
-  case "$1" in
-  1)
-    echo 单核调试编译
-    make -j1 V=s
-    ;;
-  e)
-    echo 多核忽略错误编译
-    export IGNORE_ERRORS=1
-    make -j$jobs
-    patchFile
-    make -j$jobs || make -j1 V=s
-    ;;
-  *)
-    echo 多核正常编译
-    make -j$jobs
-    ;;
-  esac
+  make -j $jobs
   if [ $? = 0 ]; then
     echo 编译固件成功
     setEnv COMPILE_FIRMWARE_STATUS success
